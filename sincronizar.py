@@ -1,83 +1,87 @@
-import pandas as pd
 import os
 import re
+import pandas as pd
 import requests
 from openpyxl import load_workbook
+from bs4 import BeautifulSoup
 
-CAMINHO_ARQUIVO_EXCEL = 'acervo.xlsx'
-NOME_PLANILHA = 'Acervo'
+EXCEL_FILE = "acervo.xlsx"
 
 def carregar_todo_excel():
-    if not os.path.exists(CAMINHO_ARQUIVO_EXCEL):
-        colunas = ['Título', 'Autor', 'ISBN', 'Editora', 'Ano', 'Exemplar', 'Sigla']
-        df = pd.DataFrame(columns=colunas)
-        salvar_em_excel(df)
-    else:
-        df = pd.read_excel(CAMINHO_ARQUIVO_EXCEL, sheet_name=NOME_PLANILHA)
-    return df
+    if os.path.exists(EXCEL_FILE):
+        return pd.read_excel(EXCEL_FILE)
+    return pd.DataFrame(columns=[
+        "Título", 
+        "Autor", 
+        "Editora", 
+        "Ano", 
+        "ISBN", 
+        "Sigla", 
+        "Número do Exemplar"
+    ])
 
 def salvar_em_excel(df):
-    with pd.ExcelWriter(CAMINHO_ARQUIVO_EXCEL, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name=NOME_PLANILHA, index=False)
+    df.to_excel(EXCEL_FILE, index=False)
 
-def buscar_dados_por_isbn(isbn):
+def obter_dados_livro(isbn):
+    url = f"https://brasilapi.com.br/api/isbn/v1/{isbn}"
     try:
-        url = f"https://brasilapi.com.br/api/isbn/v1/{isbn}"
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=5)
         if response.status_code == 200:
-            return response.json()
-        else:
-            return None
+            data = response.json()
+            return {
+                "Título": data.get("title", ""),
+                "Autor": ", ".join(data.get("authors", [])),
+                "Editora": data.get("publisher", ""),
+                "Ano": data.get("year", ""),
+                "ISBN": isbn
+            }
     except Exception:
-        return None
+        pass
+    return None
 
 def sincronizar_dados(comando):
-    try:
-        # Regex mais permissiva com suporte a "sigla da biblioteca"
-        regex = re.compile(
-            r'(?P<quantidade>\d+).*?isbn[:\s-]*?(?P<isbn>[\d\-xX]+).*?(sigla( da biblioteca)?[:\s-]*)?(?P<sigla>[\w-]+)',
-            re.IGNORECASE
-        )
-        match = regex.search(comando)
+    padrao = re.compile(
+        r"(?:Cadastrar|Registrar)?\s*(\d+)\s*(?:exemplar(?:es)?)?\s*(?:da\s+obra)?\s*(?:com)?\s*ISBN[:\s]*([\d\-xX]+)\s*(?:e\s*sigla\s*(?:da biblioteca)?[:\s]*([A-Z]{2,10}))",
+        re.IGNORECASE
+    )
+    match = padrao.search(comando)
 
-        if not match:
-            return {
-                "erro": (
-                    "Comando inválido. Exemplo de uso flexível:\n"
-                    "'Cadastrar 3 exemplares da obra com ISBN 9781234567890 e sigla da biblioteca XYZ'"
-                )
-            }
-
-        quantidade = int(match.group('quantidade'))
-        isbn = match.group('isbn').replace('-', '').strip()
-        sigla = match.group('sigla').strip().upper()
-
-        dados_livro = buscar_dados_por_isbn(isbn)
-        if not dados_livro:
-            return {"erro": "Erro ao processar o comando: ISBN não encontrado na BrasilAPI."}
-
-        df = carregar_todo_excel()
-
-        for i in range(quantidade):
-            novo_exemplar = {
-                'Título': dados_livro.get('title', ''),
-                'Autor': ', '.join(dados_livro.get('authors', [])),
-                'ISBN': isbn,
-                'Editora': dados_livro.get('publisher', ''),
-                'Ano': dados_livro.get('year', ''),
-                'Exemplar': i + 1,
-                'Sigla': sigla  # Internamente continua como 'Sigla'
-            }
-            df = pd.concat([df, pd.DataFrame([novo_exemplar])], ignore_index=True)
-
-        salvar_em_excel(df)
-
+    if not match:
         return {
-            "mensagem": (
-                f"{quantidade} exemplares da obra '{dados_livro.get('title')}' com ISBN {isbn} "
-                f"foram sincronizados com sucesso para a biblioteca com sigla {sigla}!"
-            )
+            "erro": "Comando inválido. Use: Cadastrar X exemplares da obra com ISBN: Y e sigla da biblioteca: Z"
         }
 
-    except Exception as e:
-        return {"erro": f"Erro ao processar o comando: {str(e)}"}
+    quantidade, isbn, sigla = match.groups()
+    quantidade = int(quantidade)
+    isbn = isbn.replace("-", "").strip().upper()
+
+    dados_livro = obter_dados_livro(isbn)
+    if not dados_livro:
+        return {
+            "erro": "Erro ao processar o comando: ISBN não encontrado na BrasilAPI."
+        }
+
+    acervo = carregar_todo_excel()
+    ultimo_numero = acervo[acervo["ISBN"] == isbn]["Número do Exemplar"].max()
+    if pd.isna(ultimo_numero):
+        ultimo_numero = 0
+
+    novos_dados = []
+    for i in range(1, quantidade + 1):
+        novo = dados_livro.copy()
+        novo["Sigla"] = sigla.upper()
+        novo["Número do Exemplar"] = int(ultimo_numero + i)
+        novos_dados.append(novo)
+
+    acervo = pd.concat([acervo, pd.DataFrame(novos_dados)], ignore_index=True)
+    salvar_em_excel(acervo)
+
+    return {
+        "mensagem": f"{quantidade} exemplar(es) do livro '{dados_livro['Título']}' foram cadastrados com sucesso para a biblioteca '{sigla.upper()}'.",
+        "dados": novos_dados
+    }
+
+# ✅ Compatível com cadastro.py
+def sincronizar_acervo(comando):
+    return sincronizar_dados(comando)

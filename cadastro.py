@@ -5,11 +5,12 @@ import json
 import requests
 import shutil
 import os
-import requests
 
 from gerar_docx import gerar_documento
-from sincronizar import sincronizar_acervo, carregar_todo_excel, salvar_em_excel
 
+# ===============================
+# Funções auxiliares: Cutter
+# ===============================
 def carregar_dicionario_cutter():
     caminho = "cutter_dict.json"
     if not os.path.exists(caminho):
@@ -39,6 +40,9 @@ def gerar_codigo_cutter(sobrenome, dicionario_cutter):
     salvar_dicionario_cutter(dicionario_cutter)
     return codigo
 
+# ===============================
+# Busca BrasilAPI
+# ===============================
 def buscar_dados_isbn(isbn: str):
     url = f"https://brasilapi.com.br/api/isbn/v1/{isbn}"
     try:
@@ -49,6 +53,9 @@ def buscar_dados_isbn(isbn: str):
     except Exception:
         return None
 
+# ===============================
+# Cadastro de exemplares
+# ===============================
 def cadastrar_exemplares(isbn: str, sigla: str, quantidade: int) -> pd.DataFrame:
     info = buscar_dados_isbn(isbn)
     if not info:
@@ -73,9 +80,28 @@ def cadastrar_exemplares(isbn: str, sigla: str, quantidade: int) -> pd.DataFrame
             "Exemplar": f"Ex.{i}   {sigla}",
             "Código Cutter": cutter,
             "Ano de Publicação": ano_publicacao,
-            "Classificação CDD": cdd
+            "Classificação CDD": cdd,
+            "Sigla": sigla.upper()
         }
         exemplares.append(exemplar)
 
     df = pd.DataFrame(exemplares)
     return df
+
+# ===============================
+# Excel: carregar e salvar
+# ===============================
+def carregar_todo_excel():
+    caminho = "acervo.xlsx"
+    if not os.path.exists(caminho):
+        return pd.DataFrame(columns=[
+            "Título", "Autor", "ISBN", "ID_Acervo", "Exemplar",
+            "Código Cutter", "Ano de Publicação", "Classificação CDD", "Sigla"
+        ])
+    return pd.read_excel(caminho)
+
+def salvar_em_excel(df: pd.DataFrame):
+    backup_path = "acervo_backup.xlsx"
+    if os.path.exists("acervo.xlsx"):
+        shutil.copy("acervo.xlsx", backup_path)
+    df.to_excel("acervo.xlsx", index=False)
