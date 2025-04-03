@@ -2,7 +2,8 @@ from flask import Flask, request, jsonify
 import re
 from cadastro import cadastrar_exemplares
 from gerar_docx import gerar_documento
-from sincronizar import sincronizar_dados
+from sincronizar import sincronizar_acervo
+
 
 app = Flask(__name__)
 
