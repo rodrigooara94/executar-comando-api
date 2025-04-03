@@ -8,7 +8,7 @@ import os
 import requests
 
 from gerar_docx import gerar_documento
-from sincronizar import sincronizar_dados
+from sincronizar import sincronizar_acervo, carregar_todo_excel, salvar_em_excel
 
 def carregar_dicionario_cutter():
     caminho = "cutter_dict.json"
