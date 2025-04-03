@@ -3,7 +3,8 @@ import re
 import pandas as pd
 from cadastro import cadastrar_exemplares
 from gerar_docx import gerar_documento
-from sincronizar import sincronizar_dados
+from sincronizar import sincronizar_acervo, carregar_todo_excel, salvar_em_excel
+
 
 app = Flask(__name__)
 
