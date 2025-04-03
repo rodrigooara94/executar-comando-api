@@ -1,16 +1,10 @@
 from flask import Flask, request, jsonify
 import re
-import pandas as pd
 from cadastro import cadastrar_exemplares
 from gerar_docx import gerar_documento
-from sincronizar import sincronizar_acervo, carregar_todo_excel, salvar_em_excel
-
+from sincronizar import sincronizar_dados
 
 app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "API do Executar Comando está online!"
 
 @app.route("/executar-comando", methods=["POST"])
 def executar_comando():
@@ -20,7 +14,6 @@ def executar_comando():
     if not comando:
         return jsonify({"erro": "Você precisa enviar um campo 'comando' no corpo da requisição."}), 400
 
-    # Extrair dados do comando em linguagem natural
     match = re.search(
         r"cadastrar\s+(\d+)\s+exemplares.*isbn[:\s]*([\d\-]+).*sigla[:\s]*([A-Z]{2,4})",
         comando,
@@ -37,25 +30,18 @@ def executar_comando():
     sigla = match.group(3).upper()
 
     try:
-        # Gerar exemplares
-        df = cadastrar_exemplares(isbn, sigla, quantidade)
-        registros = df.to_dict(orient="records")
-
-        # Gerar documento .docx
-        nome_docx = f"{sigla}_{isbn}.docx"
-        gerar_documento(df, nome_docx)
-
-        # Gerar planilha Excel com nome fixo
-        nome_excel = f"acervo_{sigla}.xlsx"
-        sincronizar_dados(df, nome_arquivo=nome_excel)
-
+        registros = cadastrar_exemplares(isbn, quantidade, sigla)
+        gerar_documento(registros)
+        sincronizar_dados(registros, sigla)
     except Exception as e:
-        return jsonify({"erro": f"Erro durante o processamento: {str(e)}"}), 500
+        return jsonify({"erro": f"Erro ao processar o comando: {str(e)}"}), 500
 
     return jsonify({
         "status": "ok",
         "quantidade": len(registros),
-        "arquivo_docx": nome_docx,
-        "arquivo_excel": nome_excel,
         "dados": registros
     })
+
+# Isso aqui é **ESSENCIAL** para o Render/Gunicorn conseguir importar `app`
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000)
