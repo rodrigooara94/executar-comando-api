@@ -5,8 +5,8 @@ import json
 import requests
 import shutil
 import os
+import requests
 
-from brasilapi import BrasilAPI
 from gerar_docx import gerar_documento
 from sincronizar import sincronizar_dados
 
@@ -30,7 +30,6 @@ def gerar_codigo_cutter(sobrenome, dicionario_cutter):
     numero = 1
     codigo = f"{prefixo}{str(numero).zfill(3)}"
 
-    # Garante unicidade
     codigos_existentes = set(dicionario_cutter.values())
     while codigo in codigos_existentes:
         numero += 1
@@ -40,14 +39,25 @@ def gerar_codigo_cutter(sobrenome, dicionario_cutter):
     salvar_dicionario_cutter(dicionario_cutter)
     return codigo
 
-def cadastrar_exemplares(isbn: str, sigla: str, quantidade: int) -> pd.DataFrame:
-    brasilapi = BrasilAPI()
-    info = brasilapi.buscar_por_isbn(isbn)
+def buscar_dados_isbn(isbn: str):
+    url = f"https://brasilapi.com.br/api/isbn/v1/{isbn}"
+    try:
+        response = requests.get(url, timeout=5)
+        if response.status_code != 200:
+            return None
+        return response.json()
+    except Exception:
+        return None
 
-    titulo = info["titulo"]
-    autor = info["autor"]
-    ano_publicacao = info["ano_publicacao"]
-    cdd = info["cdd"]
+def cadastrar_exemplares(isbn: str, sigla: str, quantidade: int) -> pd.DataFrame:
+    info = buscar_dados_isbn(isbn)
+    if not info:
+        raise ValueError("ISBN não encontrado na BrasilAPI.")
+
+    titulo = info.get("title", "")
+    autor = ", ".join(info.get("authors", [])) if info.get("authors") else ""
+    ano_publicacao = info.get("year", "")
+    cdd = info.get("classification", "")
 
     dicionario_cutter = carregar_dicionario_cutter()
 

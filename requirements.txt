@@ -5,5 +5,5 @@ requests
 beautifulsoup4
 gunicorn
 flask
-
+requests
 
