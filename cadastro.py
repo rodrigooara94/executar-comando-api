@@ -4,106 +4,68 @@ import unicodedata
 import json
 import requests
 import shutil
+import os
 
-# Carrega dicionário Cutter externo
-with open("cutter_dict.json", encoding="utf-8") as f:
-    cutter_dict = json.load(f)
+from brasilapi import BrasilAPI
+from gerar_docx import gerar_documento
+from sincronizar import sincronizar_dados
 
-ARTIGOS = {"o", "os", "a", "as", "um", "uns", "uma", "umas", "do", "da", "dos", "das", "de", "em", "no", "na", "nos", "nas"}
-
-def remover_acentos(texto):
-    return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
-
-def extrair_sobrenome(autor):
-    partes = autor.split()
-    return remover_acentos(partes[-1]) if partes else "Anon"
-
-def extrair_letras_uteis_titulo(titulo):
-    palavras = re.findall(r"\b\w+\b", remover_acentos(titulo.lower()))
-    uteis = [p for p in palavras if p not in ARTIGOS]
-    return uteis if uteis else ["x"]
-
-def buscar_codigo_cutter(sobrenome):
-    sobrenome_norm = sobrenome.lower()
-    for i in range(6, 1, -1):
-        chave = sobrenome_norm[:i]
-        if chave in cutter_dict:
-            return cutter_dict[chave]
-    return "000"
-
-def gerar_codigo_cutter(df, autor, titulo):
-    sobrenome = extrair_sobrenome(autor)
-    codigo = buscar_codigo_cutter(sobrenome)
-    letras_titulo = extrair_letras_uteis_titulo(titulo)
-
-    sufixo = letras_titulo[0][0].lower()
-    indice = 1
-    while any((str(codigo) + sufixo) == str(e)[-4:].lower() for e in df.get("Código Cutter", [])):
-        if indice >= len(letras_titulo[0]):
-            if len(letras_titulo) > 1:
-                letras_titulo.pop(0)
-                indice = 0
-            else:
-                sufixo += "x"
-                break
-        sufixo = letras_titulo[0][indice].lower()
-        indice += 1
-
-    return f"{sobrenome[0].upper()}{codigo}{sufixo}"
-
-def enriquecer_dados(isbn: str) -> dict:
-    url = f"https://brasilapi.com.br/api/isbn/v1/{isbn}"
-    try:
-        r = requests.get(url, timeout=5)
-        if r.status_code != 200:
-            return {}
-
-        data = r.json()
-
-        return {
-            "Título": data.get("title", "").strip(),
-            "Subtítulo": data.get("subtitle", "").strip(),
-            "Autor": ", ".join(data.get("authors") or []).strip(),
-            "Editora": data.get("publisher", "").strip(),
-            "Ano de Publicação": str(data.get("year", "")),
-            "Local de Publicação": data.get("location", "").strip(),
-            "Edição": data.get("edition", "").strip(),
-            "Volume": data.get("volume", "").strip(),
-            "Classificação CDD": data.get("classification", "").strip(),
-            "ISBN": isbn
-        }
-
-    except Exception as e:
-        print(f"⚠️ Erro ao consultar BrasilAPI: {e}")
+def carregar_dicionario_cutter():
+    caminho = "cutter_dict.json"
+    if not os.path.exists(caminho):
         return {}
+    with open(caminho, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-def cadastrar_varios_exemplares_por_comando(comando_usuario: str) -> pd.DataFrame:
-    match = re.search(r"cadastrar\s+(\d+)\s+exemplares.*isbn[:\s]*([\d\-]+).*sigla[:\s]*([A-Z]{2,4})", comando_usuario, re.IGNORECASE)
-    if not match:
-        raise ValueError("❌ Comando inválido. Use: 'Cadastrar X exemplares da obra com ISBN: Y e sigla: Z'")
+def salvar_dicionario_cutter(dicionario):
+    with open("cutter_dict.json", "w", encoding="utf-8") as f:
+        json.dump(dicionario, f, ensure_ascii=False, indent=4)
 
-    quantidade = int(match.group(1))
-    isbn = match.group(2).replace("-", "")
-    sigla = match.group(3).upper()
+def gerar_codigo_cutter(sobrenome, dicionario_cutter):
+    sobrenome = sobrenome.upper()
+    if sobrenome in dicionario_cutter:
+        return dicionario_cutter[sobrenome]
 
-    dados_base = enriquecer_dados(isbn)
-    if not dados_base:
-        raise Exception("❌ Não foi possível obter os dados da obra via ISBN.")
+    prefixo = sobrenome[:3]
+    numero = 1
+    codigo = f"{prefixo}{str(numero).zfill(3)}"
 
-    registros = []
-    df_existente = pd.DataFrame()
-    for i in range(quantidade):
-        n = i + 1
-        registro = dados_base.copy()
-        registro["ID_Acervo"] = f"{sigla}{str(n).zfill(5)}"
-        registro["Código Cutter"] = gerar_codigo_cutter(df_existente, registro["Autor"], registro["Título"])
-        registro["Exemplar"] = f"Ex.{n}   {sigla}"
-        registros.append(registro)
-        df_existente = pd.concat([df_existente, pd.DataFrame([registro])], ignore_index=True)
+    # Garante unicidade
+    codigos_existentes = set(dicionario_cutter.values())
+    while codigo in codigos_existentes:
+        numero += 1
+        codigo = f"{prefixo}{str(numero).zfill(3)}"
 
-    df_final = pd.DataFrame(registros)
-    df_final.to_excel("acervo.xlsx", index=False)
+    dicionario_cutter[sobrenome] = codigo
+    salvar_dicionario_cutter(dicionario_cutter)
+    return codigo
 
-    shutil.move("acervo.xlsx", "/mnt/data/acervo.xlsx")
+def cadastrar_exemplares(isbn: str, sigla: str, quantidade: int) -> pd.DataFrame:
+    brasilapi = BrasilAPI()
+    info = brasilapi.buscar_por_isbn(isbn)
 
-    return df_final
+    titulo = info["titulo"]
+    autor = info["autor"]
+    ano_publicacao = info["ano_publicacao"]
+    cdd = info["cdd"]
+
+    dicionario_cutter = carregar_dicionario_cutter()
+
+    exemplares = []
+    for i in range(1, quantidade + 1):
+        sobrenome = autor.split(" ")[-1] if autor else "AUT"
+        cutter = gerar_codigo_cutter(sobrenome, dicionario_cutter)
+        exemplar = {
+            "Título": titulo,
+            "Autor": autor,
+            "ISBN": isbn,
+            "ID_Acervo": f"{sigla}{str(i).zfill(5)}",
+            "Exemplar": f"Ex.{i}   {sigla}",
+            "Código Cutter": cutter,
+            "Ano de Publicação": ano_publicacao,
+            "Classificação CDD": cdd
+        }
+        exemplares.append(exemplar)
+
+    df = pd.DataFrame(exemplares)
+    return df
