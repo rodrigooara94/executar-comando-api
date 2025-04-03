@@ -59,3 +59,7 @@ def sincronizar_acervo(df, coluna_id='ID_Acervo'):
 def carregar_todo_excel(caminho_excel):
     """Carrega todo o conteúdo de um arquivo Excel"""
     return pd.read_excel(caminho_excel, dtype=str)
+
+def salvar_em_excel(df: pd.DataFrame, nome_arquivo: str):
+    """Salva um DataFrame em um arquivo Excel"""
+    df.to_excel(nome_arquivo, index=False)
